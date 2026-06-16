@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
+<title>频闪检测 · 灯光健康助手</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface2: #1e1e2e;
+    --text: #e0e0e8;
+    --text2: #9898b0;
+    --accent: #7c5cfc;
+    --good: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; overflow:hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ── Header ── */
+  .header {
+    padding: 14px 20px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg);
+    z-index: 10;
+    position: relative;
+  }
+  .header h1 { font-size:17px; font-weight:600; letter-spacing:-0.02em; }
+  .header .badge {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface2);
+    color: var(--text2);
+  }
+
+  /* ── Camera view ── */
+  .camera-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  .camera-wrap video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .camera-wrap canvas { display:none; }
+
+  /* Overlay crosshair */
+  .crosshair {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    width: 100px; height: 100px;
+    border: 2px solid rgba(255,255,255,0.45);
+    border-radius: 50%;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .crosshair::after {
+    content: '';
+    width: 2px; height: 60%;
+    background: rgba(255,255,255,0.35);
+    position: absolute;
+  }
+  .crosshair::before {
+    content: '';
+    height: 2px; width: 60%;
+    background: rgba(255,255,255,0.35);
+    position: absolute;
+  }
+
+  /* State overlay */
+  .state-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    background: rgba(0,0,0,0.55);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .state-overlay.active { opacity:1; }
+  .state-overlay .countdown {
+    font-size: 64px;
+    font-weight: 200;
+    letter-spacing: -0.04em;
+    color: #fff;
+  }
+  .state-overlay .hint {
+    font-size: 15px;
+    color: rgba(255,255,255,0.7);
+  }
+
+  /* No-camera fallback */
+  .no-camera {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text2);
+    padding: 40px;
+    text-align: center;
+  }
+  .no-camera .icon { font-size: 48px; }
+  .no-camera button {
+    margin-top: 12px;
+    padding: 12px 28px;
+    border-radius: 24px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  /* ── Bottom controls ── */
+  .controls {
+    padding: 16px 20px 20px;
+    background: var(--bg);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .btn-detect {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: var(--radius);
+    background: var(--accent);
+    color: #fff;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    transition: transform 0.15s, opacity 0.2s;
+    -webkit-appearance: none;
+  }
+  .btn-detect:active { transform: scale(0.97); }
+  .btn-detect:disabled { opacity: 0.4; transform: none; }
+  .btn-detect.counting { background: #ef4444; }
+
+  .mode-tabs {
+    display: flex;
+    gap: 8px;
+  }
+  .mode-tab {
+    flex:1;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--surface2);
+    background: transparent;
+    color: var(--text2);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    -webkit-appearance: none;
+  }
+  .mode-tab.active {
+    background: var(--surface2);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* ── Results sheet ── */
+  .results-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0; right: 0;
+    background: var(--surface);
+    border-radius: 20px 20px 0 0;
+    z-index: 100;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 8px 20px 36px;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.6);
+  }
+  .results-sheet.open { transform: translateY(0); }
+
+  .sheet-handle {
+    width: 36px; height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    margin: 12px auto 16px;
+  }
+
+  .score-ring {
+    width: 120px; height: 120px;
+    margin: 0 auto 16px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .score-ring svg { position: absolute; inset:0; }
+  .score-ring .score-text {
+    font-size: 42px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+  }
+  .score-label {
+    text-align: center;
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+  .score-desc {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text2);
+    margin-bottom: 20px;
+  }
+
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+  }
+  .metric-row .label { color: var(--text2); font-size:13px; }
+  .metric-row .value { font-size:14px; font-weight:600; }
+
+  .info-box {
+    margin-top: 16px;
+    padding: 14px 16px;
+    background: var(--surface2);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent);
+    font-size: 13px;
+    color: var(--text2);
+    line-height: 1.6;
+  }
+  .info-box strong { color: var(--text); }
+
+  .btn-close-sheet {
+    width:100%;
+    margin-top:16px;
+    padding:12px;
+    border:none;
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 15px;
+    cursor: pointer;
+  }
+
+  /* ── Permission prompt ── */
+  .perm-prompt {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 40px;
+    text-align: center;
+  }
+  .perm-prompt.hidden { display:none; }
+  .perm-prompt .icon { font-size:56px; }
+  .perm-prompt h2 { font-size:19px; font-weight:600; }
+  .perm-prompt p { font-size:14px; color:var(--text2); line-height:1.6; }
+  .perm-prompt button {
+    padding: 14px 40px;
+    border-radius: 24px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--surface2);
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 13px;
+    z-index: 300;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity:1; }
+
+  /* Spinner */
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .spinner {
+    width:20px; height:20px;
+    border:2px solid rgba(255,255,255,0.2);
+    border-top-color:#fff;
+    border-radius:50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto;
+  }
+</style>
+</head>
+<body>
+
+<!-- Permission / welcome screen -->
+<div class="perm-prompt" id="permPrompt">
+  <div class="icon">🔦</div>
+  <h2>灯光频闪检测</h2>
+  <p>通过摄像头分析日光灯 / LED 灯的频闪情况<br>评估对眼睛健康的影响</p>
+  <p style="font-size:12px;color:#666;">需要访问相机 · 所有分析在本地完成 · 不上传任何数据</p>
+  <button id="btnStart">开始检测</button>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Header -->
+<div class="header">
+  <h1>频闪检测</h1>
+  <span class="badge" id="modeBadge">快照模式</span>
+</div>
+
+<!-- Camera -->
+<div class="camera-wrap" id="cameraWrap">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas"></canvas>
+  <canvas id="temporalCanvas" style="display:none"></canvas>
+  <div class="crosshair" id="crosshair"></div>
+  <div class="state-overlay" id="stateOverlay">
+    <div class="countdown" id="countdown"></div>
+    <div class="hint" id="hintText"></div>
+  </div>
+  <div class="no-camera" id="noCamera" style="display:none;">
+    <div class="icon">📷</div>
+    <p>无法访问相机</p>
+    <p style="font-size:12px;color:var(--text2)">请在 HTTPS 环境下打开，并允许相机权限</p>
+    <button onclick="location.reload()">重试</button>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="snapshot" id="tabSnapshot">📸 快照分析</button>
+    <button class="mode-tab" data-mode="video" id="tabVideo">🎥 视频分析</button>
+    <button class="mode-tab" data-mode="dual" id="tabDual">🔬 双模检测</button>
+  </div>
+  <button class="btn-detect" id="btnDetect" disabled>等待相机就绪…</button>
+</div>
+
+<!-- Results sheet -->
+<div class="results-sheet" id="resultsSheet">
+  <div class="sheet-handle"></div>
+  <div class="score-ring" id="scoreRing">
+    <svg viewBox="0 0 120 120">
+      <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"/>
+      <circle id="scoreArc" cx="60" cy="60" r="54" fill="none" stroke="#7c5cfc" stroke-width="8"
+              stroke-linecap="round" stroke-dasharray="0 339.3" transform="rotate(-90 60 60)"/>
+    </svg>
+    <span class="score-text" id="scoreText">--</span>
+  </div>
+  <div class="score-label" id="scoreLabel"></div>
+  <div class="score-desc" id="scoreDesc"></div>
+  <div id="metricsContainer"></div>
+  <div class="info-box" id="infoBox"></div>
+  <button class="btn-close-sheet" id="btnCloseSheet">关闭 · 继续检测</button>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════
+const state = {
+  mode: 'snapshot',     // 'snapshot' | 'video' | 'dual'
+  stream: null,
+  detecting: false,
+  frameSamples: [],     // { timestamp, brightness }[]
+  rafId: null,
+  sampleStartTime: 0,
+};
+
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const temporalCanvas = $('temporalCanvas');
+const temporalCtx = temporalCanvas.getContext('2d', { willReadFrequently: true });
+const crosshair = $('crosshair');
+const stateOverlay = $('stateOverlay');
+const countdownEl = $('countdown');
+const hintEl = $('hintText');
+const btnDetect = $('btnDetect');
+const resultsSheet = $('resultsSheet');
+const scoreRing = $('scoreRing');
+const scoreText = $('scoreText');
+const scoreArc = $('scoreArc');
+const scoreLabel = $('scoreLabel');
+const scoreDesc = $('scoreDesc');
+const metricsContainer = $('metricsContainer');
+const infoBox = $('infoBox');
+const modeBadge = $('modeBadge');
+const permPrompt = $('permPrompt');
+const noCamera = $('noCamera');
+
+// ═══════════════════════════════════════════
+//  FFT (complex radix-2, in-place)
+// ═══════════════════════════════════════════
+function nextPow2(n) {
+  let p = 1;
+  while (p < n) p <<= 1;
+  return p;
+}
+
+function fft(re, im) {
+  const n = re.length;
+  // bit-reversal
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  // Cooley-Tukey
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const angle = -2 * Math.PI / len;
+    const wRe = Math.cos(angle), wIm = Math.sin(angle);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1, curIm = 0;
+      for (let j = 0; j < half; j++) {
+        const a = i + j, b = i + j + half;
+        const tRe = curRe * re[b] - curIm * im[b];
+        const tIm = curRe * im[b] + curIm * re[b];
+        re[b] = re[a] - tRe;  im[b] = im[a] - tIm;
+        re[a] += tRe;          im[a] += tIm;
+        const nRe = curRe * wRe - curIm * wIm;
+        curIm = curRe * wIm + curIm * wRe;
+        curRe = nRe;
+      }
+    }
+  }
+}
+
+// Magnitude spectrum (first half)
+function magnitude(re, im) {
+  const n = re.length;
+  const mag = new Float64Array(n / 2);
+  for (let i = 0; i < n / 2; i++) {
+    // DC bin gets raw value, others get |re + j*im|
+    mag[i] = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+  }
+  return mag;
+}
+
+// Hann window
+function hannWindow(arr) {
+  const n = arr.length;
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+    out[i] = arr[i] * w;
+  }
+  return out;
+}
+
+// Simple linear detrend
+function detrend(arr) {
+  const n = arr.length;
+  const xMean = (n - 1) / 2;
+  const yMean = arr.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - xMean) * (arr[i] - yMean);
+    den += (i - xMean) ** 2;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = yMean - slope * xMean;
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = arr[i] - (slope * i + intercept);
+  return out;
+}
+
+// ═══════════════════════════════════════════
+//  SIGNAL ANALYSIS
+// ═══════════════════════════════════════════
+
+function analyzeSignal(signal, sampleRateHz) {
+  // signal: brightness values along space (row pixels) or time (frame sequence)
+  // sampleRateHz: for spatial -> effective sampling rate (cycles per image height/width)
+  //               for temporal -> fps
+  const rawLen = signal.length;
+  if (rawLen < 8) return null;
+
+  // Detrend + window
+  const detrended = detrend(signal);
+  const windowed = hannWindow(detrended);
+
+  // Zero-pad to next power of 2
+  const fftSize = nextPow2(rawLen);
+  const re = new Float64Array(fftSize);
+  const im = new Float64Array(fftSize);
+  for (let i = 0; i < rawLen; i++) re[i] = windowed[i];
+  // rest stays 0
+
+  fft(re, im);
+  const mag = magnitude(re, im);
+
+  // Find peaks excluding DC (bin 0)
+  // Also exclude very low bins (bin 1) which are often camera auto-exposure drift
+  const startBin = 2;
+  const endBin = Math.floor(fftSize / 2) - 1;
+
+  // Compute noise floor (median of magnitudes)
+  const magSlice = Array.from(mag.slice(startBin, endBin + 1));
+  magSlice.sort((a, b) => a - b);
+  const noiseFloor = magSlice[Math.floor(magSlice.length / 2)];
+
+  // Find peaks
+  let peakBin = startBin;
+  let peakMag = 0;
+  for (let i = startBin; i <= endBin; i++) {
+    if (mag[i] > peakMag && mag[i] > mag[i - 1] && mag[i] >= mag[i + 1]) {
+      peakMag = mag[i];
+      peakBin = i;
+    }
+  }
+
+  // No significant peak
+  if (peakMag < noiseFloor * 2.5) {
+    return {
+      hasFlicker: false,
+      peakFrequency: null,
+      modulationDepth: null,
+      snr: peakMag / Math.max(noiseFloor, 0.001),
+      rawMagnitudes: mag,
+      fftSize,
+    };
+  }
+
+  // Quadratic interpolation for better frequency estimate
+  const alpha = mag[peakBin - 1] || 0;
+  const beta = mag[peakBin];
+  const gamma = mag[peakBin + 1] || 0;
+  const delta = (alpha - gamma) / (2 * (alpha - 2 * beta + gamma + 1e-10));
+  const peakFreqBin = peakBin + delta;
+  const frequencyHz = (peakFreqBin / fftSize) * sampleRateHz;
+
+  // Modulation depth: peak magnitude relative to DC
+  const dcMag = mag[0];
+  const modulationDepth = dcMag > 0 ? (2 * peakMag / dcMag) : 0;
+
+  return {
+    hasFlicker: true,
+    peakFrequency: frequencyHz,
+    modulationDepth: Math.min(modulationDepth, 1), // clamp
+    snr: peakMag / Math.max(noiseFloor, 0.001),
+    peakBin,
+    rawMagnitudes: mag,
+    fftSize,
+    noiseFloor,
+  };
+}
+
+// ═══════════════════════════════════════════
+//  SPATIAL ANALYSIS (rolling shutter banding)
+// ═══════════════════════════════════════════
+
+function spatialAnalyze() {
+  // Get video dimensions
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  if (vw < 16 || vh < 16) return null;
+
+  // Set canvas size to match video
+  canvas.width = vw;
+  canvas.height = vh;
+
+  // Draw current frame
+  ctx.drawImage(video, 0, 0, vw, vh);
+
+  // ── Extract vertical column (center) → detects HORIZONTAL bands ──
+  const colX = Math.floor(vw / 2);
+  const colData = ctx.getImageData(colX, 0, 1, vh);
+  const colBrightness = new Float64Array(vh);
+  for (let y = 0; y < vh; y++) {
+    const i = y * 4; // 1 pixel wide = 4 bytes per row
+    colBrightness[y] = 0.299 * colData.data[i] + 0.587 * colData.data[i + 1] + 0.114 * colData.data[i + 2];
+  }
+
+  // ── Extract horizontal row (center) → detects VERTICAL bands ──
+  const rowY = Math.floor(vh / 2);
+  const rowData = ctx.getImageData(0, rowY, vw, 1);
+  const rowBrightness = new Float64Array(vw);
+  for (let x = 0; x < vw; x++) {
+    const i = x * 4;
+    rowBrightness[x] = 0.299 * rowData.data[i] + 0.587 * rowData.data[i + 1] + 0.114 * rowData.data[i + 2];
+  }
+
+  // Analyze both
+  // Sample rate for spatial: number of rows/columns = "samples" across entire frame
+  // Effective temporal frequency depends on sensor readout speed
+  // We report in "cycles per frame" and convert using estimated readout time
+  const colResult = analyzeSignal(colBrightness, vh); // cycles per frame height
+  const rowResult = analyzeSignal(rowBrightness, vw); // cycles per frame width
+
+  // Pick stronger result
+  let best = null;
+  const candidates = [
+    { ...colResult, direction: 'vertical', samples: vh },
+    { ...rowResult, direction: 'horizontal', samples: vw },
+  ].filter(r => r && r.hasFlicker);
+
+  if (candidates.length > 0) {
+    best = candidates.reduce((a, b) => a.snr > b.snr ? a : b);
+    best.method = 'spatial';
+  } else {
+    // Return the strongest non-flicker result for display
+    const c1snr = colResult?.snr || 0;
+    const r1snr = rowResult?.snr || 0;
+    best = (c1snr > r1snr ? colResult : rowResult) || colResult;
+    if (best) best.method = 'spatial';
+  }
+
+  return best;
+}
+
+// ═══════════════════════════════════════════
+//  TEMPORAL ANALYSIS (frame brightness over time)
+// ═══════════════════════════════════════════
+
+function temporalAnalyze() {
+  if (state.frameSamples.length < 16) return null;
+
+  const brightness = new Float64Array(state.frameSamples.length);
+  for (let i = 0; i < state.frameSamples.length; i++) {
+    brightness[i] = state.frameSamples[i].brightness;
+  }
+
+  const avgDt = state.frameSamples.length >= 2
+    ? (state.frameSamples[state.frameSamples.length - 1].timestamp -
+       state.frameSamples[0].timestamp) / (state.frameSamples.length - 1)
+    : 33; // ms
+
+  const fps = 1000 / Math.max(avgDt, 1);
+
+  const result = analyzeSignal(brightness, fps);
+  if (result) {
+    result.method = 'temporal';
+    result.fps = fps;
+  }
+  return result;
+}
+
+// ═══════════════════════════════════════════
+//  FREQUENCY INFERENCE
+//  Given the measured frequency (which might be aliased from higher),
+//  try all plausible aliased frequencies and pick the simplest match
+// ═══════════════════════════════════════════
+
+function inferRealFrequency(measuredHz, sampleRateHz, method) {
+  // For spatial analysis: measuredHz is in cycles/frame
+  // For temporal: measuredHz is the aliased frequency
+
+  if (method === 'spatial') {
+    // The measured frequency is in cycles per frame.
+    // Given typical sensor readout of ~1/30s per full frame:
+    // cycles/frame * (1 / frame_readout_time) = cycles/sec = Hz
+    // Typical rolling shutter readout: ~1/30s for full frame at 30fps
+    // So: 5 cycles/frame → 5 / (1/30) = 150 Hz
+    const readoutTime = 1 / 30; // seconds to read entire sensor (rough estimate)
+    const realHz = measuredHz / readoutTime;
+
+    // Round to nearest plausible flicker frequency
+    const candidates = [100, 120, 200, 240, 300, 360, 400, 480];
+    let best = candidates[0];
+    let bestDist = Math.abs(realHz - candidates[0]);
+    for (const c of candidates) {
+      const d = Math.abs(realHz - c);
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
+    // If too far from any candidate, go with raw estimate
+    if (bestDist > best * 0.3) best = Math.round(realHz / 10) * 10;
+    return best;
+  }
+
+  // Temporal: try common aliasing scenarios
+  const fps = sampleRateHz; // frames per second
+  const candidates = [];
+
+  // Check: measuredHz could be aliased from 100Hz or 120Hz (most common)
+  for (const realFreq of [100, 120, 200, 240, 300, 360]) {
+    // Aliasing: f_alias = |f_real - k * f_sample| for integer k
+    for (let k = 0; k <= Math.ceil(realFreq / fps); k++) {
+      const alias = Math.abs(realFreq - k * fps);
+      if (alias < fps / 2 + 2 && Math.abs(alias - measuredHz) < 3) {
+        candidates.push({ realFreq, alias, diff: Math.abs(alias - measuredHz) });
+      }
+    }
+  }
+  candidates.sort((a, b) => a.diff - b.diff);
+  return candidates.length > 0 ? candidates[0].realFreq : measuredHz;
+}
+
+// ═══════════════════════════════════════════
+//  SCORING (IEEE 1789 basis)
+// ═══════════════════════════════════════════
+
+function computeScore(modulationDepth, frequencyHz, hasFlicker) {
+  // modulationDepth: 0..1  (flicker percentage / 100)
+  // frequencyHz: real flicker frequency
+  // hasFlicker: whether significant flicker was detected
+
+  if (!hasFlicker) {
+    return {
+      score: 98,
+      label: '优秀',
+      desc: '未检测到明显频闪 · 灯光对眼睛友好',
+      color: '#34d399',
+      risk: 'none',
+    };
+  }
+
+  const pct = modulationDepth * 100; // flicker percentage (0-100)
+
+  // IEEE 1789 low-risk region:
+  // Modulation < 0.033 * frequency (for freq < 90Hz) or
+  // Modulation < 3% (for freq >= 90Hz) is considered low risk
+  let score;
+
+  if (frequencyHz >= 90 && pct < 3) {
+    score = 90 + (3 - pct) / 3 * 10; // 90-100
+  } else if (frequencyHz >= 90 && pct < 10) {
+    score = 70 + (10 - pct) / 7 * 20; // 70-90
+  } else if (frequencyHz >= 90 && pct < 30) {
+    score = 50 + (30 - pct) / 20 * 20; // 50-70
+  } else if (pct < 50) {
+    score = 30 + (50 - pct) / 20 * 20; // 30-50
+  } else {
+    score = Math.max(0, 30 - (pct - 50) / 50 * 30); // 0-30
+  }
+
+  score = Math.round(Math.min(100, Math.max(0, score)));
+
+  let label, desc, color;
+  if (score >= 90) {
+    label = '优秀';
+    desc = `频闪极轻微（${pct.toFixed(1)}%）· 几乎无健康风险`;
+    color = '#34d399';
+  } else if (score >= 70) {
+    label = '良好';
+    desc = `有轻微频闪（${pct.toFixed(1)}%）· 日常使用影响较小`;
+    color = '#a3e635';
+  } else if (score >= 50) {
+    label = '一般';
+    desc = `频闪较明显（${pct.toFixed(1)}%）· 长时间阅读建议改善`;
+    color = '#fbbf24';
+  } else if (score >= 30) {
+    label = '较差';
+    desc = `频闪严重（${pct.toFixed(1)}%）· 建议更换灯具或驱动电源`;
+    color = '#fb923c';
+  } else {
+    label = '很差';
+    desc = `频闪非常严重（${pct.toFixed(1)}%）· 对眼睛有明显伤害风险`;
+    color = '#f87171';
+  }
+
+  return { score, label, desc, color, risk: score < 50 ? 'high' : score < 70 ? 'medium' : 'low' };
+}
+
+// ═══════════════════════════════════════════
+//  RESULT DISPLAY
+// ═══════════════════════════════════════════
+
+function showResults(spatialResult, temporalResult) {
+  // Pick primary result: prefer spatial for snapshot, temporal for video, both for dual
+  let primary, secondary;
+  if (state.mode === 'snapshot') {
+    primary = spatialResult;
+    secondary = temporalResult;
+  } else if (state.mode === 'video') {
+    primary = temporalResult;
+    secondary = spatialResult;
+  } else {
+    // dual: use spatial as primary (more reliable for frequency inference),
+    // temporal for cross-validation
+    primary = spatialResult || temporalResult;
+    secondary = spatialResult && temporalResult ? temporalResult : null;
+  }
+
+  if (!primary) {
+    showToast('分析失败，请重试');
+    return;
+  }
+
+  // Infer real frequency
+  let realFreq = null;
+  let modulationDepth = primary.modulationDepth || 0;
+  let hasFlicker = primary.hasFlicker;
+
+  if (hasFlicker && primary.peakFrequency !== null) {
+    const sampleRate = primary.method === 'spatial'
+      ? primary.samples : (primary.fps || 30);
+    realFreq = inferRealFrequency(primary.peakFrequency, sampleRate, primary.method);
+  }
+
+  // Cross-validate with secondary if available
+  if (secondary && secondary.hasFlicker && !hasFlicker) {
+    hasFlicker = true;
+    modulationDepth = secondary.modulationDepth || 0;
+    const sRate = secondary.method === 'spatial'
+      ? secondary.samples : (secondary.fps || 30);
+    realFreq = inferRealFrequency(secondary.peakFrequency, sRate, secondary.method);
+  }
+
+  const result = computeScore(modulationDepth, realFreq || 100, hasFlicker);
+
+  // Update UI
+  const circumference = 2 * Math.PI * 54;
+  const dashLen = (result.score / 100) * circumference;
+
+  scoreText.textContent = result.score;
+  scoreText.style.color = result.color;
+  scoreArc.setAttribute('stroke', result.color);
+  scoreArc.setAttribute('stroke-dasharray', `${dashLen} ${circumference}`);
+  scoreLabel.textContent = result.label;
+  scoreLabel.style.color = result.color;
+  scoreDesc.textContent = result.desc;
+
+  // Metrics
+  let metricsHTML = '';
+  if (hasFlicker) {
+    metricsHTML += `
+      <div class="metric-row">
+        <span class="label">频闪频率</span>
+        <span class="value">${realFreq || '?'} Hz ${primary.method === 'spatial' ? '(空间分析)' : '(时间分析)'}</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">频闪百分比 (调制深度)</span>
+        <span class="value">${(modulationDepth * 100).toFixed(1)}%</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">信号强度 (SNR)</span>
+        <span class="value">${primary.snr.toFixed(1)}x</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">分析方法</span>
+        <span class="value">${primary.method === 'spatial' ? '卷帘快门条纹' : '帧亮度波动'}</span>
+      </div>`;
+  } else {
+    metricsHTML += `
+      <div class="metric-row">
+        <span class="label">检测状态</span>
+        <span class="value" style="color:#34d399">未检测到频闪 ✓</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">分析方法</span>
+        <span class="value">${primary.method === 'spatial' ? '卷帘快门条纹' : '帧亮度波动'}</span>
+      </div>`;
+  }
+  if (secondary) {
+    metricsHTML += `
+      <div class="metric-row">
+        <span class="label">次级验证</span>
+        <span class="value">${secondary.hasFlicker ? '也检测到频闪' : '未检测到（可能因设备特性）'}</span>
+      </div>`;
+  }
+  metricsContainer.innerHTML = metricsHTML;
+
+  // Info box
+  let infoText = '';
+  if (hasFlicker && realFreq) {
+    if (realFreq === 100) {
+      infoText = '<strong>检测到 100Hz 频闪</strong><br>这是 50Hz 交流电驱动的典型特征（中国大陆电网）。常见于非电子镇流器的荧光灯和部分低质量 LED 灯。';
+    } else if (realFreq === 120) {
+      infoText = '<strong>检测到 120Hz 频闪</strong><br>这是 60Hz 交流电驱动的典型特征（美国/日本电网）。';
+    } else if (realFreq > 200) {
+      infoText = `<strong>检测到 ${realFreq}Hz 高频频闪</strong><br>可能是 LED 灯的 PWM 调光造成。IEEE 1789 认为 >3kHz 的频闪基本无风险，但 <400Hz 的频闪仍可能引起不适。`;
+    } else {
+      infoText = `<strong>检测到 ${realFreq}Hz 频闪</strong><br>建议进一步确认灯具类型。`;
+    }
+  } else {
+    infoText = '<strong>灯光看起来稳定</strong><br>可能原因：① 灯具真的无频闪（高质量LED/白炽灯）；② 相机自动曝光抹平了频闪；③ 手机使用全局快门。建议在较暗环境下再测一次，或用"视频分析"模式交叉验证。';
+  }
+  infoText += '<br><br><small>参考标准：IEEE 1789-2015 · 所有分析在本地完成</small>';
+  infoBox.innerHTML = infoText;
+
+  resultsSheet.classList.add('open');
+}
+
+// ═══════════════════════════════════════════
+//  DETECTION ORCHESTRATION
+// ═══════════════════════════════════════════
+
+async function runDetection() {
+  if (state.detecting || !state.stream) return;
+
+  // Check video is ready (has valid dimensions)
+  if (video.videoWidth < 16 || video.videoHeight < 16) {
+    showToast('相机尚未就绪，请稍候再试');
+    // Wait a bit and check again
+    await sleep(500);
+    if (video.videoWidth < 16 || video.videoHeight < 16) {
+      showToast('无法获取相机画面，请刷新页面重试');
+      return;
+    }
+  }
+
+  state.detecting = true;
+  btnDetect.textContent = '检测中…';
+  btnDetect.disabled = true;
+  stateOverlay.classList.add('active');
+
+  let spatialResult = null;
+  let temporalResult = null;
+
+  try {
+    if (state.mode === 'snapshot' || state.mode === 'dual') {
+      // Spatial: take a quick snapshot
+      countdownEl.textContent = '📸';
+      hintEl.textContent = '拍照分析中…';
+      await sleep(200);
+
+      // Lock exposure briefly (we can't on web, but we can wait for AE to settle)
+      spatialResult = spatialAnalyze();
+
+      // Try a few times with slight delays (rolling shutter phase changes)
+      if (!spatialResult || !spatialResult.hasFlicker) {
+        for (let i = 0; i < 3; i++) {
+          await sleep(150);
+          const retry = spatialAnalyze();
+          if (retry && retry.hasFlicker && (!spatialResult || retry.snr > (spatialResult.snr || 0))) {
+            spatialResult = retry;
+          }
+        }
+      }
+    }
+
+    if (state.mode === 'video' || state.mode === 'dual') {
+      // Temporal: collect frames for 2 seconds (frames already being collected by startFrameSampling)
+      const duration = state.mode === 'dual' ? 1500 : 2200; // shorter for dual mode
+      state.sampleStartTime = performance.now();
+
+      // Countdown
+      const totalSec = Math.ceil(duration / 1000);
+      for (let sec = totalSec; sec >= 1; sec--) {
+        countdownEl.textContent = sec;
+        hintEl.textContent = '请保持手机稳定…';
+        stateOverlay.classList.add('active');
+        await sleep(1000);
+      }
+      countdownEl.textContent = '';
+      hintEl.textContent = '分析中…';
+
+      // Allow a few more frames to come in
+      await sleep(200);
+
+      temporalResult = temporalAnalyze();
+    }
+
+    // Show results
+    stateOverlay.classList.remove('active');
+    showResults(spatialResult, temporalResult);
+
+  } catch (err) {
+    console.error('Detection error:', err);
+    showToast('检测出错: ' + err.message);
+    stateOverlay.classList.remove('active');
+  } finally {
+    state.detecting = false;
+    stopFrameSampling();
+    btnDetect.textContent = state.mode === 'snapshot' ? '📸 检测频闪' :
+                            state.mode === 'video' ? '🎥 开始录制' : '🔬 双模检测';
+    btnDetect.disabled = false;
+    btnDetect.classList.remove('counting');
+  }
+}
+
+// Frame sampler for temporal mode (uses requestAnimationFrame for ~60fps)
+// Uses a separate offscreen canvas to avoid conflicting with spatial analysis
+function onVideoFrame(now) {
+  if (!state.detecting) return;
+
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  if (vw < 16 || vh < 16) return;
+
+  // Sample a small central region for brightness (20×20 pixels → 400 samples → stable avg)
+  const sampleSize = 20;
+  const sx = Math.floor((vw - sampleSize) / 2);
+  const sy = Math.floor((vh - sampleSize) / 2);
+
+  temporalCanvas.width = sampleSize;
+  temporalCanvas.height = sampleSize;
+  temporalCtx.drawImage(video, sx, sy, sampleSize, sampleSize, 0, 0, sampleSize, sampleSize);
+
+  const imgData = temporalCtx.getImageData(0, 0, sampleSize, sampleSize);
+  let sum = 0;
+  const pixels = sampleSize * sampleSize;
+  for (let i = 0; i < pixels; i++) {
+    const idx = i * 4;
+    sum += 0.299 * imgData.data[idx] + 0.587 * imgData.data[idx + 1] + 0.114 * imgData.data[idx + 2];
+  }
+  const avgBrightness = sum / pixels;
+
+  state.frameSamples.push({
+    timestamp: now,
+    brightness: avgBrightness,
+  });
+
+  // Throttle to ~60fps (don't exceed display refresh rate)
+  // rAF naturally fires at display refresh, but we sample every frame.
+  // For 120Hz ProMotion displays, decimate to 60Hz to avoid oversampling.
+  if (state.frameSamples.length > 200) {
+    // Keep only last 200 samples (prevents memory growth if detection takes long)
+    state.frameSamples = state.frameSamples.slice(-200);
+  }
+}
+
+let _lastSampleTime = 0;
+function sampleLoop(now) {
+  if (!state.detecting) {
+    state.rafId = null;
+    return;
+  }
+  // Limit to max ~60 actual samples per second (skip if called faster than 16ms)
+  if (now - _lastSampleTime >= 16) {
+    _lastSampleTime = now;
+    onVideoFrame(now);
+  }
+  state.rafId = requestAnimationFrame(sampleLoop);
+}
+
+function startFrameSampling() {
+  if (state.rafId) return;
+  _lastSampleTime = 0;
+  state.frameSamples = [];
+  state.rafId = requestAnimationFrame(sampleLoop);
+}
+
+function stopFrameSampling() {
+  if (state.rafId) {
+    cancelAnimationFrame(state.rafId);
+    state.rafId = null;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  CAMERA
+// ═══════════════════════════════════════════
+
+async function startCamera() {
+  try {
+    const constraints = {
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 60 },
+      },
+      audio: false,
+    };
+
+    state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = state.stream;
+    await video.play();
+
+    // Hide permission prompt
+    permPrompt.classList.add('hidden');
+    noCamera.style.display = 'none';
+    btnDetect.disabled = false;
+    btnDetect.textContent = state.mode === 'snapshot' ? '📸 检测频闪' :
+                            state.mode === 'video' ? '🎥 开始录制' : '🔬 双模检测';
+
+    // Update badge with actual resolution
+    setTimeout(() => {
+      const w = video.videoWidth || '?';
+      const h = video.videoHeight || '?';
+      modeBadge.textContent = `${w}×${h}`;
+    }, 1000);
+
+  } catch (err) {
+    console.error('Camera error:', err);
+    permPrompt.classList.add('hidden');
+    noCamera.style.display = 'flex';
+    if (err.name === 'NotAllowedError') {
+      showToast('相机权限被拒绝，请在设置中允许');
+    } else if (err.name === 'NotFoundError') {
+      showToast('未找到相机设备');
+    } else if (err.name === 'NotReadableError') {
+      showToast('相机被其他应用占用');
+    } else {
+      showToast('相机启动失败: ' + err.message);
+    }
+  }
+}
+
+function stopCamera() {
+  if (state.stream) {
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+    video.srcObject = null;
+  }
+  if (state.rafId) {
+    stopFrameSampling();
+  }
+}
+
+// ═══════════════════════════════════════════
+//  UI HELPERS
+// ═══════════════════════════════════════════
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+let toastTimer;
+function showToast(msg) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ═══════════════════════════════════════════
+//  EVENT HANDLERS
+// ═══════════════════════════════════════════
+
+$('btnStart').addEventListener('click', startCamera);
+
+btnDetect.addEventListener('click', () => {
+  if (state.detecting) return;
+  if (!state.stream) {
+    startCamera();
+    return;
+  }
+
+  // For temporal modes, start frame sampling then run detection
+  if (state.mode === 'video' || state.mode === 'dual') {
+    startFrameSampling();
+  }
+
+  runDetection();
+});
+
+$('btnCloseSheet').addEventListener('click', () => {
+  resultsSheet.classList.remove('open');
+});
+
+// Mode tabs
+document.querySelectorAll('.mode-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.mode = tab.dataset.mode;
+    modeBadge.textContent = state.mode === 'snapshot' ? '快照模式' :
+                            state.mode === 'video' ? '视频模式' : '双模检测';
+    if (!state.detecting && state.stream) {
+      btnDetect.textContent = state.mode === 'snapshot' ? '📸 检测频闪' :
+                              state.mode === 'video' ? '🎥 开始录制' : '🔬 双模检测';
+    }
+  });
+});
+
+// Swipe down to close results sheet
+let touchStartY = 0;
+resultsSheet.addEventListener('touchstart', e => {
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+resultsSheet.addEventListener('touchmove', e => {
+  const dy = e.touches[0].clientY - touchStartY;
+  if (dy > 60 && resultsSheet.scrollTop <= 0) {
+    resultsSheet.classList.remove('open');
+  }
+}, { passive: true });
+
+// Handle page visibility (stop camera when tab is hidden)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopCamera();
+  }
+});
+
+// ═══════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════
+
+// Try to start camera immediately if returning visitor
+// (Safari may have remembered permission)
+setTimeout(() => {
+  if (!state.stream) {
+    // Don't auto-start; user needs to tap
+  }
+}, 500);
+
+// Log
+console.log('🔦 频闪检测已就绪');
+console.log('  快照模式: 分析卷帘快门条纹 (空间域)');
+console.log('  视频模式: 分析帧亮度波动 (时间域)');
+console.log('  双模检测: 两种方法交叉验证');
+console.log('  标准参考: IEEE 1789-2015');
+console.log('  所有数据在本地处理，不上传');
+</script>
+</body>
+</html>
